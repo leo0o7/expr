@@ -1,12 +1,17 @@
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
+#[repr(u8)]
 enum Op {
-    EOF = 9999,
-    Add = 1,      // 1
-    Subtract = 2, // 1
-    Multiply = 3, // 2
-    Divide = 4,   // 2
-    Exp = 5,      // 3
+    Add = 1,
+    Subtract = 2,
+    Multiply = 3,
+    Divide = 4,
+    Exp = 5,
+    Bracket(Bracket) = 6,
+    EOF = 255,
 }
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+struct Bracket(char);
 
 impl TryFrom<char> for Op {
     type Error = ();
@@ -18,6 +23,7 @@ impl TryFrom<char> for Op {
             '*' => Ok(Self::Multiply),
             '/' => Ok(Self::Divide),
             '^' => Ok(Self::Exp),
+            '{' | '}' | '[' | ']' | '(' | ')' => Ok(Self::Bracket(Bracket(value))),
             '\n' => Ok(Self::EOF),
             _ => Err(()),
         }
@@ -25,15 +31,9 @@ impl TryFrom<char> for Op {
 }
 impl Op {
     fn precedence(&self) -> u8 {
-        match self {
-            Self::EOF => 0,
-            Self::Add => 1,
-            Self::Subtract => 1,
-            Self::Multiply => 2,
-            Self::Divide => 2,
-            Self::Exp => 3,
-        }
+        unsafe { *(self as *const Self as *const u8) }
     }
+
     fn execute(&self, a: f64, b: f64) -> f64 {
         match self {
             Op::Add => a + b,
@@ -41,17 +41,51 @@ impl Op {
             Op::Multiply => a * b,
             Op::Divide => a / b,
             Op::Exp => a.powf(b),
-            Op::EOF => unreachable!(),
+            Op::EOF | Op::Bracket(_) => unreachable!(),
+        }
+    }
+
+    /// values should have at least two elements
+    fn apply(&self, values: &mut Vec<f64>) {
+        assert!(values.len() >= 2, "not enough elements");
+
+        let b = values.pop().unwrap();
+        let a = values.pop().unwrap();
+        values.push(self.execute(a, b));
+    }
+
+    fn is_bracket(&self) -> bool {
+        matches!(self, Op::Bracket(_))
+    }
+
+    fn inner_bracket(&self) -> &Bracket {
+        match self {
+            Self::Bracket(a) => a,
+            _ => panic!("impossible"),
         }
     }
 }
 
-fn apply_op(values: &mut Vec<f64>, op: &Op) {
-    // values should have at least two elements
-    assert!(values.len() >= 2, "not enough elements");
-    let b = values.pop().unwrap();
-    let a = values.pop().unwrap();
-    values.push(op.execute(a, b));
+impl Bracket {
+    fn opposite(&self) -> Bracket {
+        Bracket(match self.0 {
+            '{' => '}',
+            '[' => ']',
+            '(' => ')',
+            '}' => '{',
+            ']' => '[',
+            ')' => '(',
+            _ => unreachable!(),
+        })
+    }
+
+    fn is_opening(&self) -> bool {
+        match self.0 {
+            '{' | '[' | '(' => true,
+            '}' | ']' | ')' => false,
+            _ => unreachable!(),
+        }
+    }
 }
 
 fn main() {
@@ -62,49 +96,87 @@ fn main() {
 
     let mut values = Vec::<f64>::new();
     let mut ops = Vec::<Op>::new();
+    let mut open_brackets = Vec::<Bracket>::new();
 
     let mut curr = String::from("");
-    for c in input.chars() {
-        // dbg!(&c);
+    for (op_opt, c) in input.chars().map(|c| (Op::try_from(c), c)) {
+        if op_opt.is_err() {
+            curr.push(c);
+            continue;
+        }
+
+        let op = op_opt.unwrap();
+        let trimmed = curr.trim();
+
+        // dbg!(&trimmed);
+        // dbg!(&op);
         // dbg!(&ops);
         // dbg!(&values);
 
-        if let Ok(op) = Op::try_from(c) {
-            let v = curr
-                .trim()
+        if !trimmed.is_empty() {
+            let v = trimmed
                 .parse::<f64>()
                 .expect("unparsable character sequence");
             values.push(v);
+        }
 
+        if op.is_bracket() {
+            let bracket = *op.inner_bracket();
+            if bracket.is_opening() {
+                open_brackets.push(bracket);
+                ops.push(op);
+            } else {
+                if open_brackets.last().is_none_or(|b| b.opposite() != bracket) {
+                    panic!("mismatched brackets");
+                };
+
+                while let Some(top) = ops.last()
+                    && top.precedence() < op.precedence()
+                {
+                    top.apply(&mut values);
+                    ops.pop();
+                }
+                open_brackets.pop();
+                ops.pop();
+            }
+        } else {
             while let Some(top) = ops.last()
                 && top.precedence() >= op.precedence()
-                && !(top == &Op::Exp && op == Op::Exp)
-            // exponentiation is right associative
+                && !(top == &Op::Exp && op == Op::Exp) // exponentiation is right associative
+                && !top.is_bracket()
             {
-                apply_op(&mut values, top);
+                top.apply(&mut values);
                 ops.pop();
             }
 
             ops.push(op);
-            curr = String::from("");
-        } else {
-            curr.push(c);
         }
+
+        curr = String::from("");
     }
     // dbg!(&ops);
     // dbg!(&values);
 
-    // run cleanup
+    if !open_brackets.is_empty() {
+        panic!("mismatched brackets");
+    }
     if !curr.is_empty() {
         let v = curr
             .trim()
             .parse::<f64>()
             .expect("unparsable character sequence");
         values.push(v);
-
-        while let Some(op) = ops.pop() {
-            apply_op(&mut values, &op);
-        }
     }
+    while let Some(op) = ops.pop() {
+        // dbg!(&op);
+        // dbg!(&ops);
+        // dbg!(&values);
+        if op == Op::EOF {
+            continue;
+        }
+        op.apply(&mut values);
+    }
+    // dbg!(&values);
+
     println!("= {}", values[0]);
 }
