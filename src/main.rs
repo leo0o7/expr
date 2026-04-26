@@ -1,3 +1,5 @@
+use core::panic;
+
 #[derive(Debug, PartialEq, Clone, Copy)]
 #[repr(u8)]
 enum Op {
@@ -5,8 +7,9 @@ enum Op {
     Subtract = 2,
     Multiply = 3,
     Divide = 4,
-    Exp = 5,
-    Bracket(Bracket) = 6,
+    Neg = 5,
+    Exp = 6,
+    Bracket(Bracket) = 7,
     EOF = 255,
 }
 
@@ -41,12 +44,18 @@ impl Op {
             Op::Multiply => a * b,
             Op::Divide => a / b,
             Op::Exp => a.powf(b),
-            Op::EOF | Op::Bracket(_) => unreachable!(),
+            Op::EOF | Op::Bracket(_) | Op::Neg => unreachable!(),
         }
     }
 
     /// values should have at least two elements
     fn apply(&self, values: &mut Vec<f64>) {
+        if matches!(self, Op::Neg) {
+            let a = values.pop().expect("not enough elements");
+            values.push(-a);
+            return;
+        }
+
         assert!(values.len() >= 2, "not enough elements");
 
         let b = values.pop().unwrap();
@@ -99,6 +108,7 @@ fn main() {
     let mut open_brackets = Vec::<Bracket>::new();
 
     let mut curr = String::from("");
+    let mut expect_operand = true;
     for (op_opt, c) in input.chars().map(|c| (Op::try_from(c), c)) {
         if op_opt.is_err() {
             curr.push(c);
@@ -112,12 +122,23 @@ fn main() {
         // dbg!(&op);
         // dbg!(&ops);
         // dbg!(&values);
+        // dbg!(&expect_operand);
 
         if !trimmed.is_empty() {
             let v = trimmed
                 .parse::<f64>()
                 .expect("unparsable character sequence");
             values.push(v);
+        } else {
+            if expect_operand && op == Op::Subtract {
+                ops.push(Op::Neg);
+                curr = String::from("");
+                continue;
+            }
+            if expect_operand && op == Op::Add {
+                curr = String::from("");
+                continue;
+            }
         }
 
         if op.is_bracket() {
@@ -125,6 +146,7 @@ fn main() {
             if bracket.is_opening() {
                 open_brackets.push(bracket);
                 ops.push(op);
+                expect_operand = true;
             } else {
                 if open_brackets.last().is_none_or(|b| b.opposite() != bracket) {
                     panic!("mismatched brackets");
@@ -138,6 +160,7 @@ fn main() {
                 }
                 open_brackets.pop();
                 ops.pop();
+                expect_operand = false;
             }
         } else {
             while let Some(top) = ops.last()
@@ -150,6 +173,7 @@ fn main() {
             }
 
             ops.push(op);
+            expect_operand = true;
         }
 
         curr = String::from("");
