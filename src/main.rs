@@ -1,5 +1,7 @@
 use crate::utils::{Bracket, Operator, Token};
 
+#[cfg(test)]
+mod tests;
 mod utils;
 
 #[derive(Debug, PartialEq, Clone)]
