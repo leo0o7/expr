@@ -1,4 +1,18 @@
-use core::panic;
+#[derive(Debug, PartialEq, Clone)]
+struct Parser<'a> {
+    whole: &'a str,
+    byte: usize,
+    ops: Vec<Op>,
+    values: Vec<f64>,
+    brackets: Vec<Bracket>,
+    expect_operand: bool,
+}
+
+#[derive(Debug)]
+enum Token {
+    Operator(Op),
+    Operand(f64),
+}
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 #[repr(u8)]
@@ -16,6 +30,162 @@ enum Op {
 #[derive(Debug, PartialEq, Clone, Copy)]
 struct Bracket(char);
 
+impl<'a> Parser<'a> {
+    fn new(str: &'a str) -> Self {
+        Self {
+            whole: str,
+            byte: 0,
+            values: Vec::<f64>::new(),
+            ops: Vec::<Op>::new(),
+            brackets: Vec::<Bracket>::new(),
+            expect_operand: true,
+        }
+    }
+
+    fn run(&mut self) {
+        while let Some(next) = self.next_token() {
+            dbg!("--------");
+            dbg!(&next);
+            dbg!(&self.ops);
+            dbg!(&self.values);
+            dbg!(&self.expect_operand);
+
+            match next {
+                Token::Operator(op) => {
+                    // handle sign changers
+                    if self.expect_operand {
+                        match op {
+                            Op::Subtract => {
+                                self.ops.push(Op::Neg);
+                                continue;
+                            }
+                            Op::Add => {
+                                continue;
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    if op.is_bracket() {
+                        self.handle_brackets(op);
+                        continue;
+                    }
+
+                    self.execute_until(|top| {
+                        top.precedence() >= op.precedence()
+                        && !(top == &Op::Exp && op == Op::Exp) // exponentiation is right associative
+                        && !top.is_bracket()
+                    });
+                    self.ops.push(op);
+                    self.expect_operand = true;
+                }
+                Token::Operand(v) => {
+                    self.values.push(v);
+                    self.expect_operand = false;
+                }
+            }
+        }
+
+        dbg!("--------");
+        dbg!("outside of main loop, rest to execute is: ");
+        dbg!(&self.whole[self.byte..]);
+        dbg!(&self.ops);
+        dbg!(&self.values);
+        dbg!(&self.expect_operand);
+
+        if !self.brackets.is_empty() {
+            panic!("mismatched brackets");
+        }
+
+        // parse final number
+        if self.byte < self.whole.len() {
+            dbg!("parsing final number");
+            let v = self.whole[self.byte..]
+                .trim()
+                .parse::<f64>()
+                .expect("unparsable character sequence");
+            self.values.push(v);
+        }
+
+        dbg!("--------");
+        dbg!("executing remaining ops");
+        dbg!(&self.ops);
+        dbg!(&self.values);
+        self.execute_until(|_| true);
+
+        dbg!("--------");
+        dbg!(&self.values);
+        println!("= {}", self.values[0]);
+    }
+
+    fn handle_brackets(&mut self, op: Op) {
+        let bracket = *op.inner_bracket();
+        if bracket.is_opening() {
+            self.brackets.push(bracket);
+            self.ops.push(op);
+
+            self.expect_operand = true;
+            return;
+        }
+
+        if self.brackets.last().is_none_or(|b| b.opposite() != bracket) {
+            panic!("mismatched brackets");
+        };
+
+        self.execute_until(|top| top.precedence() < op.precedence());
+        self.brackets.pop();
+        self.ops.pop();
+        self.expect_operand = false;
+    }
+
+    fn next_token(&mut self) -> Option<Token> {
+        let rest = &self.whole[self.byte..];
+
+        let mut chars = rest.chars();
+        let mut c = chars.next();
+        loop {
+            if let Some(n) = c {
+                self.byte += 1;
+                if let Ok(op) = Op::try_from(n) {
+                    return Some(Token::Operator(op));
+                }
+
+                let mut end = self.byte + 1;
+                while let Some(n) = chars.next()
+                    && Op::try_from(n).is_err()
+                {
+                    end += 1;
+                }
+                let str = self.whole[self.byte - 1..end - 1].trim();
+                if str.is_empty() {
+                    c = self.whole.chars().nth(end - 1);
+                    self.byte = end - 1;
+                    continue;
+                }
+
+                let v = str.parse::<f64>().expect("unparsable character sequence");
+                self.byte = end - 1;
+                return Some(Token::Operand(v));
+            }
+            return None;
+        }
+    }
+
+    fn execute_until<F: Fn(&Op) -> bool>(&mut self, fun: F) {
+        while let Some(top) = self.ops.last()
+            && fun(top)
+        {
+            if top == &Op::EOF {
+                self.ops.pop();
+                continue;
+            }
+
+            top.apply(&mut self.values);
+            self.ops.pop();
+        }
+    }
+}
+
 impl TryFrom<char> for Op {
     type Error = ();
 
@@ -32,6 +202,7 @@ impl TryFrom<char> for Op {
         }
     }
 }
+
 impl Op {
     fn precedence(&self) -> u8 {
         unsafe { *(self as *const Self as *const u8) }
@@ -102,105 +273,6 @@ fn main() {
     std::io::stdin()
         .read_line(&mut input)
         .expect("Falied to read input");
-
-    let mut values = Vec::<f64>::new();
-    let mut ops = Vec::<Op>::new();
-    let mut open_brackets = Vec::<Bracket>::new();
-
-    let mut curr = String::from("");
-    let mut expect_operand = true;
-    for (op_opt, c) in input.chars().map(|c| (Op::try_from(c), c)) {
-        if op_opt.is_err() {
-            curr.push(c);
-            continue;
-        }
-
-        let op = op_opt.unwrap();
-        let trimmed = curr.trim();
-
-        // dbg!(&trimmed);
-        // dbg!(&op);
-        // dbg!(&ops);
-        // dbg!(&values);
-        // dbg!(&expect_operand);
-
-        if !trimmed.is_empty() {
-            let v = trimmed
-                .parse::<f64>()
-                .expect("unparsable character sequence");
-            values.push(v);
-        } else {
-            if expect_operand && op == Op::Subtract {
-                ops.push(Op::Neg);
-                curr = String::from("");
-                continue;
-            }
-            if expect_operand && op == Op::Add {
-                curr = String::from("");
-                continue;
-            }
-        }
-
-        if op.is_bracket() {
-            let bracket = *op.inner_bracket();
-            if bracket.is_opening() {
-                open_brackets.push(bracket);
-                ops.push(op);
-                expect_operand = true;
-            } else {
-                if open_brackets.last().is_none_or(|b| b.opposite() != bracket) {
-                    panic!("mismatched brackets");
-                };
-
-                while let Some(top) = ops.last()
-                    && top.precedence() < op.precedence()
-                {
-                    top.apply(&mut values);
-                    ops.pop();
-                }
-                open_brackets.pop();
-                ops.pop();
-                expect_operand = false;
-            }
-        } else {
-            while let Some(top) = ops.last()
-                && top.precedence() >= op.precedence()
-                && !(top == &Op::Exp && op == Op::Exp) // exponentiation is right associative
-                && !top.is_bracket()
-            {
-                top.apply(&mut values);
-                ops.pop();
-            }
-
-            ops.push(op);
-            expect_operand = true;
-        }
-
-        curr = String::from("");
-    }
-    // dbg!(&ops);
-    // dbg!(&values);
-
-    if !open_brackets.is_empty() {
-        panic!("mismatched brackets");
-    }
-    if !curr.is_empty() {
-        let v = curr
-            .trim()
-            .parse::<f64>()
-            .expect("unparsable character sequence");
-        values.push(v);
-    }
-    while let Some(op) = ops.pop() {
-        // dbg!(&op);
-        // dbg!(&ops);
-        // dbg!(&values);
-        if op == Op::EOF {
-            continue;
-        }
-        op.apply(&mut values);
-    }
-    // dbg!(&values);
-
-    println!("= {}", values[0]);
+    let mut p = Parser::new(&input);
+    p.run();
 }
