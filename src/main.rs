@@ -24,6 +24,7 @@ enum Op {
     Neg = 5,
     Exp = 6,
     Bracket(Bracket) = 7,
+    #[allow(clippy::upper_case_acronyms)]
     EOF = 255,
 }
 
@@ -52,7 +53,7 @@ impl<'a> Parser<'a> {
 
             match next {
                 Token::Operator(op) => {
-                    // handle sign changers
+                    // handle sign changers & implicit multiplication
                     if self.expect_operand {
                         match op {
                             Op::Subtract => {
@@ -62,7 +63,10 @@ impl<'a> Parser<'a> {
                             Op::Add => {
                                 continue;
                             }
-                            _ => {}
+                            Op::Bracket(_) => {}
+                            _ => {
+                                panic!("invalid operator");
+                            }
                         }
                     }
 
@@ -80,6 +84,13 @@ impl<'a> Parser<'a> {
                     self.expect_operand = true;
                 }
                 Token::Operand(v) => {
+                    if !self.expect_operand {
+                        self.execute_until(|top| {
+                            top.precedence() >= Op::Multiply.precedence() && !top.is_bracket()
+                        });
+                        self.ops.push(Op::Multiply);
+                    }
+
                     self.values.push(v);
                     self.expect_operand = false;
                 }
@@ -121,6 +132,12 @@ impl<'a> Parser<'a> {
     fn handle_brackets(&mut self, op: Op) {
         let bracket = *op.inner_bracket();
         if bracket.is_opening() {
+            if !self.expect_operand {
+                self.execute_until(|top| {
+                    top.precedence() >= Op::Multiply.precedence() && !top.is_bracket()
+                });
+                self.ops.push(Op::Multiply);
+            }
             self.brackets.push(bracket);
             self.ops.push(op);
 
