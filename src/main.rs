@@ -157,7 +157,7 @@ impl<'a> Lexer<'a> {
                         return Token::Operator(op);
                     }
 
-                    let mut seen_dot = false;
+                    let mut seen_dot = n == '.';
                     let mut end = self.pos;
                     while let Some(n) = chars.peek()
                         && (n.is_numeric() || (*n == '.' && !seen_dot))
