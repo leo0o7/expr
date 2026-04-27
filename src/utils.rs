@@ -1,7 +1,11 @@
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub(crate) enum Token {
-    Operator(Operator),
     Operand(f64),
+    Operator(Operator),
+    OpenBracket(Bracket),
+    CloseBracket(Bracket),
+    #[allow(clippy::upper_case_acronyms)]
+    EOF,
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -13,13 +17,20 @@ pub(crate) enum Operator {
     Divide = 4,
     Neg = 5,
     Exp = 6,
-    Bracket(Bracket) = 7,
-    #[allow(clippy::upper_case_acronyms)]
-    EOF = 255,
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
-pub(crate) struct Bracket(char);
+pub(crate) enum Bracket {
+    Paren,  // ()
+    Square, // []
+    Brace,  // {}
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub(crate) enum OperatorOrBracket {
+    Operator(Operator),
+    Bracket(Bracket),
+}
 
 impl TryFrom<char> for Operator {
     type Error = ();
@@ -31,8 +42,6 @@ impl TryFrom<char> for Operator {
             '*' => Ok(Self::Multiply),
             '/' => Ok(Self::Divide),
             '^' => Ok(Self::Exp),
-            '{' | '}' | '[' | ']' | '(' | ')' => Ok(Self::Bracket(Bracket(value))),
-            '\n' => Ok(Self::EOF),
             _ => Err(()),
         }
     }
@@ -40,7 +49,7 @@ impl TryFrom<char> for Operator {
 
 impl Operator {
     pub(crate) fn precedence(&self) -> u8 {
-        unsafe { *(self as *const Self as *const u8) }
+        *self as u8
     }
 
     fn execute(&self, a: f64, b: f64) -> f64 {
@@ -50,11 +59,10 @@ impl Operator {
             Operator::Multiply => a * b,
             Operator::Divide => a / b,
             Operator::Exp => a.powf(b),
-            Operator::EOF | Operator::Bracket(_) | Operator::Neg => unreachable!(),
+            Operator::Neg => unreachable!("can't call execute on a Operator::Neg"),
         }
     }
 
-    /// values should have at least two elements
     pub(crate) fn apply(&self, values: &mut Vec<f64>) {
         if matches!(self, Operator::Neg) {
             let a = values.pop().expect("not enough elements");
@@ -68,37 +76,13 @@ impl Operator {
         let a = values.pop().unwrap();
         values.push(self.execute(a, b));
     }
-
-    pub(crate) fn is_bracket(&self) -> bool {
-        matches!(self, Operator::Bracket(_))
-    }
-
-    pub(crate) fn inner_bracket(&self) -> &Bracket {
-        match self {
-            Self::Bracket(a) => a,
-            _ => panic!("impossible"),
-        }
-    }
 }
 
-impl Bracket {
-    pub(crate) fn opposite(&self) -> Bracket {
-        Bracket(match self.0 {
-            '{' => '}',
-            '[' => ']',
-            '(' => ')',
-            '}' => '{',
-            ']' => '[',
-            ')' => '(',
-            _ => unreachable!(),
-        })
-    }
-
-    pub(crate) fn is_opening(&self) -> bool {
-        match self.0 {
-            '{' | '[' | '(' => true,
-            '}' | ']' | ')' => false,
-            _ => unreachable!(),
+impl OperatorOrBracket {
+    pub fn get_operator(&self) -> Option<Operator> {
+        match &self {
+            OperatorOrBracket::Operator(operator) => Some(*operator),
+            OperatorOrBracket::Bracket(_) => None,
         }
     }
 }

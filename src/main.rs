@@ -1,8 +1,17 @@
-use crate::utils::{Bracket, Operator, Token};
+use crate::utils::{Bracket, Operator, OperatorOrBracket, Token};
 
 #[cfg(test)]
 mod tests;
 mod utils;
+
+#[derive(Debug, PartialEq, Clone)]
+struct ExpressionEvaluator<'a> {
+    ops: Vec<OperatorOrBracket>,
+    values: Vec<f64>,
+    brackets: Vec<Bracket>,
+    expect_operand: bool,
+    lexer: Lexer<'a>,
+}
 
 #[derive(Debug, PartialEq, Clone)]
 struct Lexer<'a> {
@@ -10,69 +19,51 @@ struct Lexer<'a> {
     pos: usize,
 }
 
-#[derive(Debug, PartialEq, Clone)]
-struct ExpressionEvaluator<'a> {
-    ops: Vec<Operator>,
-    values: Vec<f64>,
-    brackets: Vec<Bracket>,
-    expect_operand: bool,
-    lexer: Lexer<'a>,
-}
-
 impl<'a> ExpressionEvaluator<'a> {
     fn new(str: &'a str) -> Self {
         Self {
+            ops: Vec::<OperatorOrBracket>::new(),
             values: Vec::<f64>::new(),
-            ops: Vec::<Operator>::new(),
             brackets: Vec::<Bracket>::new(),
             expect_operand: true,
             lexer: Lexer::new(str),
         }
     }
 
-    fn eval(&mut self) -> f64 {
-        while let Some(token) = self.lexer.next_token() {
-            self.process_token(token);
+    fn eval(mut self) -> f64 {
+        while let token = self.lexer.next_token()
+            && token != Token::EOF
+        {
+            match token {
+                Token::Operator(op) => self.process_operator(op),
+                Token::Operand(value) => self.process_operand(value),
+                Token::OpenBracket(bracket) => self.process_open_bracket(bracket),
+                Token::CloseBracket(bracket) => self.process_close_bracket(bracket),
+                Token::EOF => unreachable!(),
+            };
         }
 
         self.finalize()
-    }
-
-    fn process_token(&mut self, token: Token) {
-        match token {
-            Token::Operator(op) => self.process_operator(op),
-            Token::Operand(value) => self.process_operand(value),
-        }
     }
 
     fn process_operator(&mut self, op: Operator) {
         if self.expect_operand {
             match op {
                 Operator::Subtract => {
-                    self.ops.push(Operator::Neg);
+                    self.ops.push(OperatorOrBracket::Operator(Operator::Neg));
                     return;
                 }
                 Operator::Add => {
                     return;
                 }
-                Operator::Bracket(_) => {}
-                _ => {
-                    panic!("invalid operator");
-                }
+                _ => panic!("invalid operator"),
             }
         }
 
-        if op.is_bracket() {
-            self.process_bracket(op);
-            return;
-        }
-
         self.execute_until(|top| {
-            top.precedence() >= op.precedence()
-                        && !(top == &Operator::Exp && op == Operator::Exp) // exponentiation is right associative
-                        && !top.is_bracket()
+            top.precedence() >= op.precedence() && !(top == Operator::Exp && op == Operator::Exp) // exponentiation is right associative
         });
-        self.ops.push(op);
+        self.ops.push(OperatorOrBracket::Operator(op));
         self.expect_operand = true;
     }
 
@@ -85,41 +76,31 @@ impl<'a> ExpressionEvaluator<'a> {
         self.expect_operand = false;
     }
 
-    fn process_bracket(&mut self, op: Operator) {
-        let bracket = *op.inner_bracket();
-        if bracket.is_opening() {
-            self.process_left_bracket(bracket, op);
-        } else {
-            self.process_right_bracket(op, bracket);
-        }
-    }
-
-    fn process_left_bracket(&mut self, bracket: Bracket, op: Operator) {
+    fn process_open_bracket(&mut self, bracket: Bracket) {
         if !self.expect_operand {
             self.add_implicit_multiplication();
         }
 
         self.brackets.push(bracket);
-        self.ops.push(op);
+        self.ops.push(OperatorOrBracket::Bracket(bracket));
         self.expect_operand = true;
     }
 
-    fn process_right_bracket(&mut self, op: Operator, bracket: Bracket) {
-        if self.brackets.last().is_none_or(|b| b.opposite() != bracket) {
+    fn process_close_bracket(&mut self, bracket: Bracket) {
+        if self.brackets.last().is_none_or(|b| b != &bracket) {
             panic!("mismatched brackets");
         };
 
-        self.execute_until(|top| top.precedence() < op.precedence());
+        self.execute_until(|_| true);
         self.brackets.pop();
         self.ops.pop();
         self.expect_operand = false;
     }
 
     fn add_implicit_multiplication(&mut self) {
-        self.execute_until(|top| {
-            top.precedence() >= Operator::Multiply.precedence() && !top.is_bracket()
-        });
-        self.ops.push(Operator::Multiply);
+        self.execute_until(|top| top.precedence() >= Operator::Multiply.precedence());
+        self.ops
+            .push(OperatorOrBracket::Operator(Operator::Multiply));
     }
 
     fn finalize(&mut self) -> f64 {
@@ -136,14 +117,10 @@ impl<'a> ExpressionEvaluator<'a> {
         self.values[0]
     }
 
-    fn execute_until<F: Fn(&Operator) -> bool>(&mut self, fun: F) {
-        while let Some(top) = self.ops.last()
+    fn execute_until<F: Fn(Operator) -> bool>(&mut self, fun: F) {
+        while let Some(top) = self.ops.last().and_then(|top| top.get_operator())
             && fun(top)
         {
-            if top == &Operator::EOF {
-                self.ops.pop();
-                continue;
-            }
             top.apply(&mut self.values);
             self.ops.pop();
         }
@@ -158,37 +135,45 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn next_token(&mut self) -> Option<Token> {
+    fn next_token(&mut self) -> Token {
         let rest = &self.source[self.pos..];
 
-        let mut chars = rest.chars();
-        let mut c = chars.next();
-        loop {
-            if let Some(n) = c {
-                self.pos += 1;
-                if let Ok(op) = Operator::try_from(n) {
-                    return Some(Token::Operator(op));
-                }
-
-                let mut end = self.pos + 1;
-                while let Some(n) = chars.next()
-                    && Operator::try_from(n).is_err()
-                {
-                    end += 1;
-                }
-                let str = self.source[self.pos - 1..end - 1].trim();
-                if str.is_empty() {
-                    c = self.source.chars().nth(end - 1);
-                    self.pos = end - 1;
-                    continue;
-                }
-
-                let v = str.parse::<f64>().expect("unparsable character sequence");
-                self.pos = end - 1;
-                return Some(Token::Operand(v));
+        let mut chars = rest.chars().peekable();
+        while let Some(n) = chars.next() {
+            self.pos += 1;
+            if n.is_whitespace() {
+                continue;
             }
-            return None;
+
+            match n {
+                '(' => return Token::OpenBracket(Bracket::Paren),
+                ')' => return Token::CloseBracket(Bracket::Paren),
+                '[' => return Token::OpenBracket(Bracket::Square),
+                ']' => return Token::CloseBracket(Bracket::Square),
+                '{' => return Token::OpenBracket(Bracket::Brace),
+                '}' => return Token::CloseBracket(Bracket::Brace),
+                _ => {
+                    if let Ok(op) = Operator::try_from(n) {
+                        return Token::Operator(op);
+                    }
+
+                    let mut end = self.pos;
+                    while let Some(n) = chars.peek()
+                        && n.is_numeric()
+                    {
+                        end += 1;
+                        chars.next();
+                    }
+                    let str = self.source[self.pos - 1..end].trim();
+                    let v = str.parse::<f64>().expect("unparsable character sequence");
+
+                    self.pos = end;
+                    return Token::Operand(v);
+                }
+            }
         }
+
+        Token::EOF
     }
 }
 
