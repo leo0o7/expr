@@ -4,7 +4,7 @@ A small hand-written expression evaluator based on Dijkstra's shunting-yard algo
 It reads mathematical expressions in normal infix form and evaluates them directly using an operator stack and a value stack.
 It does not first build an expression tree or convert the expression into another format.
 
-It supports precedence, associativity, brackets, signed numbers, and implicit multiplication like `2(3 + 4)`.
+It supports precedence, associativity, brackets, signed numbers, decimals, and implicit multiplication like `2(3 + 4)`.
 
 ## Usage
 
@@ -28,6 +28,7 @@ Example output:
 - [x] Division: `8 / 2`
 - [x] Exponentiation: `2 ^ 3`
 - [x] Signs: `-2`, `+3`
+- [x] Decimals: `1.5 + .5`
 - [x] Brackets: `(1 + 2)`, `[1 + 2]`, `{1 + 2}`
 - [x] Implicit multiplication: `2(3 + 4)`
 - [ ] Scientific notation: `1e3`

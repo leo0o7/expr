@@ -64,6 +64,12 @@ fn handles_implicit_multiplication() {
 }
 
 #[test]
+fn handles_decimals() {
+    assert_eval("1.5+.5", 2.0);
+    assert_eval("2.25*4", 9.0);
+}
+
+#[test]
 fn formatting_does_not_change_result() {
     assert_same_eval("1+2*(3+4)", " 1 + 2 * ( 3 + 4 ) ");
     assert_same_eval("-2+3", " - 2 + + 3 ");
@@ -77,13 +83,30 @@ fn implicit_multiplication_matches_explicit_multiplication() {
 }
 
 #[test]
+fn decimal_implicit_multiplication_matches_explicit_multiplication() {
+    assert_same_eval("2.5(4)", "2.5*(4)");
+    assert_same_eval(".5(2+3)", ".5*(2+3)");
+}
+
+#[test]
 fn division_with_implicit_multiplication_is_left_associative() {
     assert_same_eval("2/2(3)/2", "((2/2)*(3))/2");
 }
 
 #[test]
+fn decimal_division_with_implicit_multiplication_is_left_associative() {
+    assert_same_eval("2/.5(3)/.25", "((2/.5)*(3))/.25");
+}
+
+#[test]
 fn division_respects_exponent_precedence() {
     assert_same_eval("2/2^(-3)/4", "2/(2^(-3))/4");
+}
+
+#[test]
+fn decimal_exponents_keep_their_decimal_operand() {
+    assert_same_eval("4^.5", "4^(1/2)");
+    assert_same_eval("8/4^.5", "8/(4^.5)");
 }
 
 #[test]

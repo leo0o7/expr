@@ -157,10 +157,14 @@ impl<'a> Lexer<'a> {
                         return Token::Operator(op);
                     }
 
+                    let mut seen_dot = false;
                     let mut end = self.pos;
                     while let Some(n) = chars.peek()
-                        && n.is_numeric()
+                        && (n.is_numeric() || (*n == '.' && !seen_dot))
                     {
+                        if *n == '.' {
+                            seen_dot = true;
+                        }
                         end += 1;
                         chars.next();
                     }
